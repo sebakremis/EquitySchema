@@ -33,11 +33,11 @@ def load_tickers(tickers_path: Path = all_tickers_file) -> pd.DataFrame:
 def fetch_prices(ticker: str, period: str = None, start: str = None, interval: str = '1d') -> pd.DataFrame:
     """
     Fetch historical data for a given ticker using yfinance.
-    It accepts either a period or a start date.
+    Now includes 'Ticker' column for Star Schema linkage.
     """
     data = pd.DataFrame()
     try:
-        yf_ticker = yf.Ticker(ticker) # Initialize yfinance Ticker object
+        yf_ticker = yf.Ticker(ticker)
         if period:
             data = yf_ticker.history(period=period, interval=interval)
         elif start:
@@ -45,6 +45,9 @@ def fetch_prices(ticker: str, period: str = None, start: str = None, interval: s
         else:
             raise ValueError("Either 'period' or 'start' must be provided.")
         
+        if data.empty:
+            return pd.DataFrame()
+
         # Format column names
         data.rename(columns={
             'Open': 'open',
@@ -55,6 +58,12 @@ def fetch_prices(ticker: str, period: str = None, start: str = None, interval: s
             'Dividends': 'dividends',
             'Stock Splits': 'stockSplits'
         }, inplace=True)
+        
+        # Add ticker column for using it as a Foreign Key
+        data['Ticker'] = ticker
+        
+        # Reset index so 'Date' becomes a column
+        data.reset_index(inplace=True)
 
         return data
     except Exception as e:
