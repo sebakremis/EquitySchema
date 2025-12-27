@@ -2,10 +2,11 @@
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
-from .config import DATA_DIR, stocks_folder, all_tickers_file, metadata_file
+from .config import DATA_DIR, stocks_folder, all_tickers_file, dim_ticker_file
 
 # Define the log file path
 log_file = stocks_folder/'update_log.txt'
+
 
 def load_tickers(tickers_path: Path = all_tickers_file) -> pd.DataFrame:
     """
@@ -109,6 +110,57 @@ def fetch_metadata(ticker: str) -> dict:
         print(f"Error extracting metadata for ticker {ticker}: {e}")
         return {}
 
+def fetch_financials(ticker: str) -> pd.DataFrame:
+    """
+    Fetches Annual and Quarterly financials (Income Statement),
+    transposes them for Power BI (Dates as rows), and adds Ticker/Type columns.
+    """
+    try:
+        yf_ticker = yf.Ticker(ticker)
+        
+        # 1. Fetch Annual and Quarterly Data
+        annual = yf_ticker.financials
+        quarterly = yf_ticker.quarterly_financials
+        
+        if annual.empty and quarterly.empty:
+            print(f"No financials found for {ticker}")
+            return pd.DataFrame()
+
+        dfs_to_concat = []
+
+        # 2. Process Annual Data
+        if not annual.empty:
+            # Transpose: Switch Rows (Metrics) and Columns (Dates)
+            annual_T = annual.T 
+            annual_T['Ticker'] = ticker
+            annual_T['PeriodType'] = 'Annual'
+            dfs_to_concat.append(annual_T)
+
+        # 3. Process Quarterly Data
+        if not quarterly.empty:
+            # Transpose
+            quarterly_T = quarterly.T 
+            quarterly_T['Ticker'] = ticker
+            quarterly_T['PeriodType'] = 'Quarterly'
+            dfs_to_concat.append(quarterly_T)
+
+        # 4. Combine and Clean
+        if dfs_to_concat:
+            combined_df = pd.concat(dfs_to_concat)
+            combined_df.index.name = 'Date' # Set index name
+            combined_df.reset_index(inplace=True) # Move Date to column
+            
+            # Ensure Date is datetime
+            combined_df['Date'] = pd.to_datetime(combined_df['Date'])
+            
+            return combined_df
+            
+        return pd.DataFrame()
+
+    except Exception as e:
+        print(f"Error fetching financials for {ticker}: {e}")
+        return pd.DataFrame()
+
 
 def log_updates():
     """
@@ -173,39 +225,79 @@ def update_stock_prices(tickers_df: pd.DataFrame):
 
 def update_stock_metadata(tickers_df: pd.DataFrame):
     """
-    Updates the stock metadata database with the latest information for all followed tickers.
+    Updates the dimension table (dim_ticker) with the latest information.
+    Renamed from 'metadata' to 'dim_ticker' to enforce Star Schema naming.
     """
     metadata_list = []
+
+    # Check if the dimension file exists
+    if dim_ticker_file.exists():
+        existing_metadata = pd.read_csv(dim_ticker_file)
+    else:
+        existing_metadata = pd.DataFrame(columns=['Ticker', 'lastUpdated'])
 
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
        
-        # if metadata file exists, check if ticker is already present
-        if metadata_file.exists():
-            existing_metadata = pd.read_csv(metadata_file)
-            if ticker in existing_metadata['Ticker'].values:
-                # check last updated date for the ticker
-                last_updated_str = existing_metadata.loc[existing_metadata['Ticker'] == ticker, 'lastUpdated'].values[0]               
-                if last_updated_str:
+        # Check if ticker is already present and updated recently
+        if ticker in existing_metadata['Ticker'].values:
+            # Safely get the last update time
+            last_updated_str = existing_metadata.loc[existing_metadata['Ticker'] == ticker, 'lastUpdated'].values[0]
+            
+            if last_updated_str:
+                try:
                     last_updated = pd.to_datetime(last_updated_str)
+                    # If updated less than 7 days ago, skip
                     if (pd.Timestamp.now() - last_updated).days < 7:
-                        print(f"Metadata for {ticker} is up to date.")
+                        print(f"Dimension data for {ticker} is up to date.")
                         continue
+                except Exception:
+                    # If date parsing fails, force update
+                    pass
+
+        # Fetch new metadata if needed
         ticker_metadata = fetch_metadata(ticker)
-        metadata_list.append(ticker_metadata)
+        if ticker_metadata: # Only append if we got data back
+            metadata_list.append(ticker_metadata)
 
-    # Save metadata to CSV
+    # Save to CSV
     if metadata_list:
-        metadata_df = pd.DataFrame(metadata_list)
-        if metadata_file.exists():
-            existing_metadata = pd.read_csv(metadata_file)
-            combined_metadata = pd.concat([existing_metadata, metadata_df])
+        new_metadata_df = pd.DataFrame(metadata_list)
+        
+        if not existing_metadata.empty:
+            # Combine old and new, keeping the latest version of duplicates
+            combined_metadata = pd.concat([existing_metadata, new_metadata_df])
             combined_metadata = combined_metadata.drop_duplicates(subset=['Ticker'], keep='last')
-            combined_metadata.to_csv(metadata_file, index=False)
         else:
-            metadata_df.to_csv(metadata_file, index=False)
-        print(f"Metadata updated and saved to {metadata_file}")
+            combined_metadata = new_metadata_df
+            
+        combined_metadata.to_csv(dim_ticker_file, index=False)
+        print(f"Dimension table updated and saved to {dim_ticker_file}")
+    else:
+        print("No new metadata to update.")
 
+
+def update_stock_financials(tickers_df: pd.DataFrame):
+    """
+    Updates the financials (fundamental) data for all tickers.
+    Saves as Parquet files in a 'financials' subfolder.
+    """
+    financials_folder = stocks_folder / 'financials'
+    financials_folder.mkdir(parents=True, exist_ok=True)
+    
+    for _, row in tickers_df.iterrows():
+        ticker = row['Ticker']
+        financials_file = financials_folder / f"{ticker}.parquet"
+        
+        # Financials data is overwrited in case it's updated or corrected by yfinance
+        new_data = fetch_financials(ticker)
+        
+        if not new_data.empty:
+            # Convert columns to string to avoid Parquet schema issues 
+            new_data.columns = new_data.columns.astype(str)
+            
+            new_data.to_parquet(financials_file)
+            print(f"Financials for {ticker} saved to {financials_file}")
 
 def update_stock_database():    
     """
@@ -215,6 +307,7 @@ def update_stock_database():
     stocks_folder.mkdir(parents=True, exist_ok=True)
     update_stock_prices(tickers_df)
     update_stock_metadata(tickers_df)
+    update_stock_financials(tickers_df)
 
 if __name__ == "__main__":
     """
