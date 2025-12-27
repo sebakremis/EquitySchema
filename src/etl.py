@@ -1,49 +1,34 @@
-"""
-src/etl.py
-
-This module implements the Extract-Transform-Load (ETL) processes that serve as
-the foundation for TradeSentinel's data pipeline. It is responsible for acquiring,
-cleaning, and structuring market and portfolio data so that downstream analytics
-and dashboards can operate on consistent, reliable inputs.
-
-Key responsibilities:
-    - Extraction:
-        Handles data ingestion from multiple sources (e.g., APIs, CSV files,
-        databases), including ticker lists, historical prices, and portfolio data.
-    - Transformation:
-        Cleans, normalizes, and enriches raw data (e.g., adjusting for splits,
-        formatting tickers, handling missing values, aligning time series).
-        Applies business rules to ensure compatibility with analytics and
-        forecasting modules.
-    - Loading:
-        Stores processed data into internal structures or persistent storage
-        (e.g., pandas DataFrames, local cache, or database tables) for use by
-        `analytics.py`, `dashboard_core.py`, and other modules.
-
-Design notes:
-    - Functions in this module should be modular and reusable, following clear
-      naming conventions such as `extract_{source}()`, `transform_{operation}()`,
-      and `load_{target}()`.
-    - By centralizing ETL logic, the project ensures reproducibility, reduces
-      duplication, and provides a single entry point for data preparation.
-    - This module acts as the bridge between external data sources and internal
-      analytics, enforcing consistency across the entire TradeSentinel workflow.
-
-In short, `etl.py` is the backbone of TradeSentinel's data pipeline, ensuring that
-all analytics and dashboards operate on clean, well-structured, and reliable data.
-"""
-
+# src/etl.py
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 from .config import DATA_DIR, stocks_folder, all_tickers_file, metadata_file
-from .dashboard_core import load_tickers
 
-# Define the path to the all tickers CSV file
-filepath = all_tickers_file
-filename = filepath.name
 # Define the log file path
 log_file = stocks_folder/'update_log.txt'
+
+def load_tickers() -> pd.DataFrame:
+    """
+    Loads tickers from a single CSV file.
+    Returns a DataFrame with a 'Ticker' column.
+    """   
+    tickers_df = pd.DataFrame()
+
+    try:
+        tickers_df = pd.read_csv(all_tickers_file)
+    except FileNotFoundError:
+        st.error(f"❌ Error loading tickers: File not found at {all_tickers_file}")
+        return pd.DataFrame(columns=['Ticker'])
+    except Exception as e:
+        st.error(f"❌ Error loading tickers: {e}")
+        return pd.DataFrame(columns=['Ticker'])
+
+    if tickers_df.empty or 'Ticker' not in tickers_df.columns:
+        st.warning(f"⚠️ No tickers found in {all_tickers_file}.")
+        return pd.DataFrame(columns=['Ticker'])
+        
+    return tickers_df
+    
    
 def fetch_prices(ticker: str, period: str = None, start: str = None, interval: str = '1d') -> pd.DataFrame:
     """
@@ -217,29 +202,14 @@ def update_stock_database():
     """
     Updates both stock prices and metadata databases.
     """
-    tickers_df = load_tickers(filepath)   
+    tickers_df = load_tickers()   
     stocks_folder.mkdir(parents=True, exist_ok=True)
     update_stock_prices(tickers_df)
     update_stock_metadata(tickers_df)
 
-def update_from_dashboard():
-    """
-    Wrapper function to update stock database from the dashboard.
-    """
-    try:
-        with open(log_file, 'r') as f:
-            last_update = f.readlines()[-1].strip() # get last line
-            st.write(f"Last update:- {last_update}")
-    except FileNotFoundError:
-        st.write("- No updates logged yet.")
-    if st.button("Update All Tickers Data"):
-        with st.spinner("Updating data... This may take a while."):           
-            update_stock_database()
-        st.rerun()
-
 if __name__ == "__main__":
     """
-    Manual execution to update stock database.
+    Execution to update stock database.
     """
     update_stock_database()    
   
