@@ -27,3 +27,7 @@ data/
 # --- csv and txt files ---
 *.csv
 *.txt
+
+# --- pycache ---
+src/__pycache__/
+*.pyc

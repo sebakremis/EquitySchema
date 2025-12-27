@@ -1,15 +1,15 @@
 # src/etl.py
 import pandas as pd
-import streamlit as st
 import yfinance as yf
+from pathlib import Path
 from .config import DATA_DIR, stocks_folder, all_tickers_file, metadata_file
 
 # Define the log file path
 log_file = stocks_folder/'update_log.txt'
 
-def load_tickers() -> pd.DataFrame:
+def load_tickers(tickers_path: Path = all_tickers_file) -> pd.DataFrame:
     """
-    Loads tickers from a single CSV file.
+    Loads tickers from a single CSV file (all_tickers_file by default).
     Returns a DataFrame with a 'Ticker' column.
     """   
     tickers_df = pd.DataFrame()
@@ -17,14 +17,14 @@ def load_tickers() -> pd.DataFrame:
     try:
         tickers_df = pd.read_csv(all_tickers_file)
     except FileNotFoundError:
-        st.error(f"❌ Error loading tickers: File not found at {all_tickers_file}")
+        print(f"Error loading tickers: File not found at {all_tickers_file}")
         return pd.DataFrame(columns=['Ticker'])
     except Exception as e:
-        st.error(f"❌ Error loading tickers: {e}")
+        print(f"Error loading tickers: {e}")
         return pd.DataFrame(columns=['Ticker'])
 
     if tickers_df.empty or 'Ticker' not in tickers_df.columns:
-        st.warning(f"⚠️ No tickers found in {all_tickers_file}.")
+        print(f"No tickers found in {all_tickers_file}.")
         return pd.DataFrame(columns=['Ticker'])
         
     return tickers_df
