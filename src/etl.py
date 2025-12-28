@@ -174,52 +174,81 @@ def log_updates():
         f.write(pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S') + '\n')
     print(f"Update logged in {log_file}")
 
+
 def update_stock_prices(tickers_df: pd.DataFrame):
     """
-    Updates the stock prices database with the latest information for all followed tickers.
-    Creates the parket file for the ticker if it does not exist.
+    Updates stock prices, ensuring only the last 5 years of data are kept.
+    Fixes Date column handling and enforces a rolling 5-year window.
     """
+    prices_folder = stocks_folder / 'prices'
+    prices_folder.mkdir(parents=True, exist_ok=True)
+
+    # Define the 5-year rolling window cutoff
+    cutoff_date = pd.Timestamp.now().normalize() - pd.DateOffset(years=5)
+    
     # Track if any updates were made
     last_update = None
     
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
-        stock_prices_file = stocks_folder/f"prices/{ticker}.parquet"
+        stock_prices_file = prices_folder/f"{ticker}.parquet"
         
-        # --- Fetch price data and update parquet file ---
+        updated_data = pd.DataFrame()
+
         if stock_prices_file.exists():
+            # 1. Load existing data
             existing_data = pd.read_parquet(stock_prices_file)
-            existing_data.index = pd.to_datetime(existing_data.index)
+            
+            # Ensure 'Date' is datetime and set as index for calculation
+            if 'Date' in existing_data.columns:
+                existing_data['Date'] = pd.to_datetime(existing_data['Date'])
+                existing_data.set_index('Date', inplace=True)
+            
             if not existing_data.empty:
-                # Determine the last date in existing data
+                # 2. Prune old data (enforce 5-year limit)
+                existing_data = existing_data[existing_data.index >= cutoff_date]
+                
+                # 3. Determine start date for NEW data
                 last_date = existing_data.index.max().date()
                 new_start_date = pd.Timestamp(last_date) + pd.Timedelta(days=1)
-                # Check if new_start_date is in the future
-                if new_start_date >= pd.Timestamp.today().normalize():
-                    print(f"No new data for {ticker}.")
-                    continue            
-                new_data = fetch_prices(ticker, start=new_start_date.strftime('%Y-%m-%d'))
-                if not new_data.empty:
-                    updated_data = pd.concat([existing_data, new_data])
-                    updated_data = updated_data[~updated_data.index.duplicated(keep='last')]
-                    updated_data.to_parquet(stock_prices_file)
-                    print(f"Updated data for {ticker} saved to {stock_prices_file}")
-                    last_update = pd.Timestamp.now().date()
+                
+                if new_start_date < pd.Timestamp.today().normalize():
+                    new_data = fetch_prices(ticker, start=new_start_date.strftime('%Y-%m-%d'))
+                    
+                    if not new_data.empty:
+                        # fetch_prices returns Date as a column, so set index to match existing_data
+                        new_data['Date'] = pd.to_datetime(new_data['Date'])
+                        new_data.set_index('Date', inplace=True)
+                        
+                        updated_data = pd.concat([existing_data, new_data])
+                        # Remove duplicates just in case
+                        updated_data = updated_data[~updated_data.index.duplicated(keep='last')]
+                    else:
+                        updated_data = existing_data
+                else:
+                    updated_data = existing_data
             else:
-                # If existing data is empty, fetch all available data
+                # Existing file was empty/corrupt, re-fetch all
                 updated_data = fetch_prices(ticker, period='5y')
-                updated_data.to_parquet(stock_prices_file)
-                print(f"Updated data for {ticker} saved to {stock_prices_file}")
-                last_update = pd.Timestamp.now().date()        
+                if not updated_data.empty:
+                    updated_data['Date'] = pd.to_datetime(updated_data['Date'])
+                    updated_data.set_index('Date', inplace=True)
 
         else:
-            # If file does not exist, fetch all available data
+            # File doesn't exist, fetch fresh 5y data
             updated_data = fetch_prices(ticker, period='5y')
+            if not updated_data.empty:
+                updated_data['Date'] = pd.to_datetime(updated_data['Date'])
+                updated_data.set_index('Date', inplace=True)
+
+        # Save Logic
+        if not updated_data.empty:
+            # Ensure we are saving Date as a column (standard for Power BI Parquet)
+            updated_data.reset_index(inplace=True)
             updated_data.to_parquet(stock_prices_file)
-            print(f"Updated data for {ticker} saved to {stock_prices_file}")
+            print(f"Updated data for {ticker} saved to {stock_prices_file} (5y window enforced)")
             last_update = pd.Timestamp.now().date()
 
-    # Log the update time
     if last_update:
         log_updates()
 
