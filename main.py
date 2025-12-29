@@ -25,7 +25,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Page configuration
-st.set_page_config(layout="wide", page_title="EquitySchema: Financial Data Engineering & Analytics", page_icon="📊")
+st.set_page_config(layout="wide", page_title="EquitySchema", page_icon="🎛️")
 
 # --- Tickers management UI ---
 
@@ -64,8 +64,8 @@ def _remove_tickers_dialog(tickers_df: pd.DataFrame, tickers_to_remove: list):
         st.rerun()
 
 def main():
-    st.title("EquitySchema")
-    st.markdown("---")
+    st.title("🎛️ EquitySchema: ETL Control Center")
+    st.write("Manage the ticker universe and update the data pipeline for the Power BI Galaxy Schema.")
 
     # Load tickers
     tickers_df = load_tickers()
@@ -95,18 +95,17 @@ def main():
             prices_log = json.load(f)
         # Create DataFrame from items directly
         # This converts {'AAPL': 'Date'} -> [('AAPL', 'Date')]
-        log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceUpdate'])
+        log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
         display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
 
     # Columns to display
-    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceUpdate']]
-
+    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceDate']]
     # Display table
     st.subheader("Tickers in Database:")
     event = st.dataframe(
         display_df,
         hide_index=True,
-        width = 800,
+        width = 850,
         on_select= "rerun",
         selection_mode="multi-row" 
         )
@@ -119,7 +118,7 @@ def main():
     selected_tickers = selected_tickers_df['Ticker'].tolist()
 
     # Manage tickers list
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([1,2])
     with col1:
         if st.button("Add Tickers"):
             _add_tickers_dialog(tickers_df)
