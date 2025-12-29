@@ -68,10 +68,10 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 │   └── core.py                  # Core app functionalities
 ├── data/                        # 💾 Flat file storage (Populated by Python)
 │   ├── all_tickers.csv          # Input list of tickers to track
-│   ├── etfs.csv                 # Input list of ETFs
+│   ├── etfs.csv                 # Lookup file to identify which tickers are ETFs
 │   └── stocks/
 │       ├── dim_ticker.csv       # Dimension Table: Company metadata
-│       ├── prices_log.json      # Logs the last price update
+│       ├── prices_log.json      # Logs the last price updates
 │       ├── financials/          # Fact Table folder: Income Statement data
 │       └── prices/              # Fact Table folder: Daily OHLCV data
 └── images/                      # 📸 Screenshots for documentation
