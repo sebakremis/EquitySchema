@@ -1,15 +1,29 @@
 # src/etl.py
-import streamlit as st
 import pandas as pd
+import json
 import yfinance as yf
 from .config import (
-    DATA_DIR, stocks_folder, dim_ticker_file
+    DATA_DIR, stocks_folder, dim_ticker_file,
+    prices_log_file
     )
 from src.core import load_tickers
 
-# Define the log file path
-log_file = stocks_folder/'update_log.txt'  
-   
+# --- Helper Functions for Log ---
+def load_prices_log() -> dict:
+    if prices_log_file.exists():
+        try:
+            with open(prices_log_file, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_prices_log(log_dict: dict):
+    with open(prices_log_file, 'w') as f:
+        json.dump(log_dict, f, indent=4)
+
+# --- Data Extraction Functions ---
+  
 def fetch_prices(ticker: str, period: str = None, start: str = None, interval: str = '1d') -> pd.DataFrame:
     """
     Fetch historical data for a given ticker using yfinance.
@@ -76,7 +90,7 @@ def fetch_metadata(ticker: str) -> dict:
             'enterpriseToEbitda': info.get('enterpriseToEbitda', None),
             # profitability data
             'returnOnAssets': info.get('returnOnAssets', None),
-            # last updated timestamp
+            # last METADATA update timestamp
             'lastUpdated': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')           
         }
         etfs_df = pd.read_csv(DATA_DIR/'etfs.csv')
@@ -140,105 +154,110 @@ def fetch_financials(ticker: str) -> pd.DataFrame:
         print(f"Error fetching financials for {ticker}: {e}")
         return pd.DataFrame()
 
-
-def log_updates():
-    """
-    Logs the last time the stock prices were updated.
-    Creates both the log file and the parent folder if they do not exist.
-    """
-    
-    stocks_folder.mkdir(parents=True, exist_ok=True)
-
-    with open(log_file, 'a') as f:
-        f.write(pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S') + '\n')
-    print(f"Update logged in {log_file}")
-
+# --- Update Functions ---
 
 def update_stock_prices(tickers_df: pd.DataFrame):
     """
-    Updates stock prices, ensuring only the last 5 years of data are kept.
-    Fixes Date column handling and enforces a rolling 5-year window.
+    Updates stock prices using a JSON log to track the last available date.
     """
     prices_folder = stocks_folder / 'prices'
     prices_folder.mkdir(parents=True, exist_ok=True)
-
-    # Define the 5-year rolling window cutoff
+    
+    # Load the "Index" of what we have
+    prices_log = load_prices_log()
+    log_updated = False
+    
+    # 5-year cutoff (Naive)
     cutoff_date = pd.Timestamp.now().normalize() - pd.DateOffset(years=5)
-    
-    # Track if any updates were made
-    last_update = None
-    
+
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
-        stock_prices_file = prices_folder/f"{ticker}.parquet"
+        stock_prices_file = prices_folder / f"{ticker}.parquet"
         
-        updated_data = pd.DataFrame()
+        # Determine the last date we possess
+        last_date_str = prices_log.get(ticker)
+        last_date = None
 
-        if stock_prices_file.exists():
-            # 1. Load existing data
-            existing_data = pd.read_parquet(stock_prices_file)
-            
-            # Ensure 'Date' is datetime and set as index for calculation
-            if 'Date' in existing_data.columns:
-                existing_data['Date'] = pd.to_datetime(existing_data['Date'])
-                existing_data.set_index('Date', inplace=True)
-            
-            if not existing_data.empty:
-                # 2. Prune old data (enforce 5-year limit)
-                existing_data = existing_data[existing_data.index >= cutoff_date]
+        if last_date_str:
+            last_date = pd.to_datetime(last_date_str).date()
+        elif stock_prices_file.exists():
+            # Fallback: File exists but not in JSON (first run)
+            try:
+                existing_data = pd.read_parquet(stock_prices_file)
+                if not existing_data.empty:
+                    # Fix Timezones just in case
+                    if 'Date' in existing_data.columns:
+                        existing_data['Date'] = pd.to_datetime(existing_data['Date'])
+                        if existing_data['Date'].dt.tz is not None:
+                            existing_data['Date'] = existing_data['Date'].dt.tz_localize(None)
+                        existing_data.set_index('Date', inplace=True)
+
+                    last_date = existing_data.index.max().date()
+                    prices_log[ticker] = str(last_date)
+                    log_updated = True
+            except Exception:
+                pass 
+
+        # Check if we need to fetch new data
+        today = pd.Timestamp.now().date()
+        if last_date is None or last_date < today:            
+            if last_date:
+                start_date = pd.Timestamp(last_date) + pd.Timedelta(days=1)
+            else:
+                start_date = cutoff_date 
+
+            # Check if start_date is actually valid (not in the future)
+            if start_date <= pd.Timestamp.now().normalize():
+                print(f"Fetching {ticker} from {start_date.date()}...")
+                new_data = fetch_prices(ticker, start=start_date.strftime('%Y-%m-%d'))
                 
-                # 3. Determine start date for NEW data
-                last_date = existing_data.index.max().date()
-                new_start_date = pd.Timestamp(last_date) + pd.Timedelta(days=1)
-                
-                if new_start_date < pd.Timestamp.today().normalize():
-                    new_data = fetch_prices(ticker, start=new_start_date.strftime('%Y-%m-%d'))
+                if not new_data.empty:
+                    # Clean New Data
+                    new_data['Date'] = pd.to_datetime(new_data['Date'])
+                    if new_data['Date'].dt.tz is not None:
+                        new_data['Date'] = new_data['Date'].dt.tz_localize(None)
+                    new_data.set_index('Date', inplace=True)
                     
-                    if not new_data.empty:
-                        # fetch_prices returns Date as a column, so set index to match existing_data
-                        new_data['Date'] = pd.to_datetime(new_data['Date'])
-                        new_data.set_index('Date', inplace=True)
-                        
+                    # Reload existing if needed (to append)
+                    existing_data = pd.DataFrame()
+                    if stock_prices_file.exists():
+                        existing_data = pd.read_parquet(stock_prices_file)
+                        if 'Date' in existing_data.columns:
+                            existing_data['Date'] = pd.to_datetime(existing_data['Date'])
+                            if existing_data['Date'].dt.tz is not None:
+                                existing_data['Date'] = existing_data['Date'].dt.tz_localize(None)
+                            existing_data.set_index('Date', inplace=True)
+
+                    # Merge
+                    if not existing_data.empty:
                         updated_data = pd.concat([existing_data, new_data])
-                        # Remove duplicates just in case
+                        updated_data = updated_data[updated_data.index >= cutoff_date]
                         updated_data = updated_data[~updated_data.index.duplicated(keep='last')]
                     else:
-                        updated_data = existing_data
-                else:
-                    updated_data = existing_data
-            else:
-                # Existing file was empty/corrupt, re-fetch all
-                updated_data = fetch_prices(ticker, period='5y')
-                if not updated_data.empty:
-                    updated_data['Date'] = pd.to_datetime(updated_data['Date'])
-                    updated_data.set_index('Date', inplace=True)
+                        updated_data = new_data
 
-        else:
-            # File doesn't exist, fetch fresh 5y data
-            updated_data = fetch_prices(ticker, period='5y')
-            if not updated_data.empty:
-                updated_data['Date'] = pd.to_datetime(updated_data['Date'])
-                updated_data.set_index('Date', inplace=True)
+                    # Save
+                    updated_data.reset_index(inplace=True)
+                    updated_data.to_parquet(stock_prices_file)
+                    
+                    # Update Log
+                    new_last_date = updated_data['Date'].max().date()
+                    prices_log[ticker] = str(new_last_date)
+                    log_updated = True
+                    print(f" -> Updated {ticker} to {new_last_date}")
 
-        # Save Logic
-        if not updated_data.empty:
-            # Ensure we are saving Date as a column (standard for Power BI Parquet)
-            updated_data.reset_index(inplace=True)
-            updated_data.to_parquet(stock_prices_file)
-            print(f"Updated data for {ticker} saved to {stock_prices_file} (5y window enforced)")
-            last_update = pd.Timestamp.now().date()
+    if log_updated:
+        save_prices_log(prices_log)
+        print("Prices log updated.")
 
-    if last_update:
-        log_updates()
-
-def update_stock_metadata(tickers_df: pd.DataFrame):
+def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Updates the dimension table (dim_ticker) with the latest information.
-    Renamed from 'metadata' to 'dim_ticker' to enforce Star Schema naming.
+    Updates the dimension table (dim_ticker).
+    Strictly follows 7-day rule using the CSV 'lastUpdated' column.
     """
     metadata_list = []
 
-    # Check if the dimension file exists
+    # Load existing CSV
     if dim_ticker_file.exists():
         existing_metadata = pd.read_csv(dim_ticker_file)
     else:
@@ -246,43 +265,46 @@ def update_stock_metadata(tickers_df: pd.DataFrame):
 
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
-       
-        # Check if ticker is already present and updated recently
+        
+        # 7-Day Optimization Logic
         if ticker in existing_metadata['Ticker'].values:
-            # Safely get the last update time
-            last_updated_str = existing_metadata.loc[existing_metadata['Ticker'] == ticker, 'lastUpdated'].values[0]
+            last_updated_vals = existing_metadata.loc[existing_metadata['Ticker'] == ticker, 'lastUpdated'].values
             
-            if last_updated_str:
+            # If we have a date, check if it's recent
+            if len(last_updated_vals) > 0 and pd.notna(last_updated_vals[0]):
                 try:
-                    last_updated = pd.to_datetime(last_updated_str)
-                    # If updated less than 7 days ago, skip
+                    last_updated = pd.to_datetime(last_updated_vals[0])
                     if (pd.Timestamp.now() - last_updated).days < 7:
-                        print(f"Dimension data for {ticker} is up to date.")
-                        continue
+                        # Data is fresh enough, skip API call
+                        continue 
                 except Exception:
-                    # If date parsing fails, force update
-                    pass
+                    pass # Date parsing failed, fetch new data
 
-        # Fetch new metadata if needed
+        # Fetch new data (because it's missing or old)
         ticker_metadata = fetch_metadata(ticker)
-        if ticker_metadata: # Only append if we got data back
+        
+        if ticker_metadata:
+            # Ensure timestamp is set here
+            ticker_metadata['lastUpdated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
             metadata_list.append(ticker_metadata)
 
-    # Save to CSV
+    # Save to CSV if we found new data
     if metadata_list:
         new_metadata_df = pd.DataFrame(metadata_list)
         
         if not existing_metadata.empty:
-            # Combine old and new, keeping the latest version of duplicates
             combined_metadata = pd.concat([existing_metadata, new_metadata_df])
+            # Keep the NEWEST version of the duplicate
             combined_metadata = combined_metadata.drop_duplicates(subset=['Ticker'], keep='last')
         else:
             combined_metadata = new_metadata_df
             
         combined_metadata.to_csv(dim_ticker_file, index=False)
-        print(f"Dimension table updated and saved to {dim_ticker_file}")
+        print(f"Dimension table updated.")
+        return combined_metadata
     else:
-        print("No new metadata to update.")
+        print("No metadata updates needed (all < 7 days old).")
+        return existing_metadata
 
 
 def update_stock_financials(tickers_df: pd.DataFrame):
@@ -313,17 +335,7 @@ def update_from_dashboard():
     """
     Wrapper function to update stock database from the dashboard.
     """
-    try:
-        with open(log_file, 'r') as f:
-            last_update = f.readlines()[-1].strip() # get last line
-            st.write(f"Last update:- {last_update}")
-    except FileNotFoundError:
-        st.write("- No updates logged yet.")
-    if st.button("Update All Tickers Data"):
-        with st.spinner("Updating data... This may take a while."):           
-            update_stock_database()
-        print("Stock database updated successfully from dashboard.")
-        st.rerun()
+    
 
 def update_stock_database():    
     """

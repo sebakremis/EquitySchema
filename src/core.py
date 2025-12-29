@@ -3,9 +3,10 @@ src.core.py
 Core functionalities for EquitySchema application.
 """
 import pandas as pd
+import json
 import yfinance as yf
 from pathlib import Path
-from src.config import all_tickers_file
+from src.config import all_tickers_file, prices_log_file, stocks_folder
 
 # --- Tickers management functions ---
 
@@ -63,14 +64,56 @@ def remove_tickers(tickers_df: pd.DataFrame, tickers_to_remove: list) -> pd.Data
     Removes specified tickers from the existing tickers DataFrame.
     Expects a list of tickers to remove.
     Returns the updated DataFrame.
+    Removes specified tickers from the dataframe, the JSON log, and deletes their data files.
     """
     # Check which tickers are actually present
     existing_tickers = tickers_df["Ticker"].tolist()
-    for ticker in tickers_to_remove:
-        if ticker not in existing_tickers:
-            print(f"Ticker '{ticker}' not found in the database. Skipping removal.")
+    valid_removals = []
 
-    updated_tickers_df = tickers_df[~tickers_df["Ticker"].isin(tickers_to_remove)].reset_index(drop=True)
+    for ticker in tickers_to_remove:
+        if ticker in existing_tickers:
+            valid_removals.append(ticker)
+        else:
+            print(f"Ticker '{ticker}' not found in the existing tickers list. Skipping removal.")
+    
+    if not valid_removals:
+        return tickers_df  # Nothing to remove
+
+    updated_tickers_df = tickers_df[~tickers_df["Ticker"].isin(valid_removals)].reset_index(drop=True)
+
+    # Remove from JSON log
+    if prices_log_file.exists():
+        try:
+            with open(prices_log_file, 'r') as f:
+                prices_log = json.load(f)
+            log_changed = False
+            for ticker in valid_removals:
+                if ticker in prices_log:
+                    del prices_log[ticker]
+                    log_changed = True
+
+            if log_changed:
+                with open(prices_log_file, 'w') as f:
+                    json.dump(prices_log, f, indent=4)
+                print(f"Removed {len(valid_removals)} ticker(s) from prices log.")
+        except Exception as e:
+            print(f"Error updating prices log: {e}")
+            
+    # Delete ticker data files
+    for ticker in valid_removals:
+        try:
+            # Remove price file
+            price_file = stocks_folder / 'prices' / f"{ticker}.parquet"
+            if price_file.exists():
+                price_file.unlink()
+            # Remove financials file
+            financials_file = stocks_folder / 'financials' / f"{ticker}.parquet"
+            if financials_file.exists():
+                financials_file.unlink()
+            print(f"Deleted data files for ticker {ticker}.")
+        except Exception as e:
+            print(f"Error deleting data file for ticker {ticker}: {e}")
+
     return updated_tickers_df
 
 def save_tickers(tickers_df: pd.DataFrame, tickers_path: Path = all_tickers_file):
@@ -82,3 +125,6 @@ def save_tickers(tickers_df: pd.DataFrame, tickers_path: Path = all_tickers_file
         tickers_df.to_csv(tickers_path, index=False)
     except Exception as e:
         print(f"Error saving tickers: {e}")
+
+
+    

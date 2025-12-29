@@ -71,7 +71,7 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 │   ├── etfs.csv                 # Input list of ETFs
 │   └── stocks/
 │       ├── dim_ticker.csv       # Dimension Table: Company metadata
-│       ├── update_log.txt       # Audit log of the last run
+│       ├── prices_log.json      # Logs the last price update
 │       ├── financials/          # Fact Table folder: Income Statement data
 │       └── prices/              # Fact Table folder: Daily OHLCV data
 └── images/                      # 📸 Screenshots for documentation

@@ -6,12 +6,13 @@ Contains the main function to update the database and manage the tickers list.
 """
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+import json
 from src.core import (
     load_tickers, save_tickers, add_tickers,
     remove_tickers
 )
-from src.etl import update_from_dashboard
+from src.etl import update_stock_database, update_stock_metadata
+from src.config import dim_ticker_file, prices_log_file
 
 # --- Hide message "Press Ctrl+Enter in st.text_area()" ---
 st.markdown("""
@@ -66,17 +67,50 @@ def main():
     st.title("EquitySchema")
     st.markdown("---")
 
-    # Load and display tickers
+    # Load tickers
     tickers_df = load_tickers()
-    st.subheader("Tickers in Database:")
 
+    # Get info from metadata file
+    if dim_ticker_file.exists():
+        metadata_df = pd.read_csv(dim_ticker_file)
+    else:
+        metadata_df = pd.DataFrame(columns=['Ticker'])
+    
+    # Find if tickers are missing in metadata
+    missing_tickers = tickers_df[~tickers_df['Ticker'].isin(metadata_df['Ticker'])]
+
+    # If missing tickers, fetch metadata for them
+    if not missing_tickers.empty:
+        with st.spinner(f"Fetching metadata for {len(missing_tickers)} new ticker(s)..."):
+            update_stock_metadata(missing_tickers)
+            # Reload metadata
+            metadata_df = pd.read_csv(dim_ticker_file)
+    
+    # Merge tickers with metadata
+    display_df = pd.merge(tickers_df, metadata_df, on='Ticker', how='left')
+
+    # Merge with json log file to add the Last Price Update info
+    if prices_log_file.exists():
+        with open(prices_log_file, 'r') as f:
+            prices_log = json.load(f)
+        # Create DataFrame from items directly
+        # This converts {'AAPL': 'Date'} -> [('AAPL', 'Date')]
+        log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceUpdate'])
+        display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
+
+    # Columns to display
+    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceUpdate']]
+
+    # Display table
+    st.subheader("Tickers in Database:")
     event = st.dataframe(
-        tickers_df["Ticker"],
+        display_df,
         hide_index=True,
-        width = "stretch",
+        width = 800,
         on_select= "rerun",
-        selection_mode="multi-row"
+        selection_mode="multi-row" 
         )
+    
     # Get tickers from selected rows.
     selected_indices = event.selection.rows # returns a list of numerical indices
     selected_tickers_df = tickers_df.iloc[selected_indices]
@@ -96,7 +130,11 @@ def main():
 
     # Update database section
     st.subheader("Update Database")
-    update_from_dashboard()
+    if st.button("Update All Tickers Data"):
+        with st.spinner("Updating data... This may take a while."):           
+            update_stock_database()
+        print("Stock database updated successfully from dashboard.")
+        st.rerun()
 
 
 if __name__ == "__main__":
