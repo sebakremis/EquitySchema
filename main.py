@@ -63,18 +63,23 @@ def _remove_tickers_dialog(tickers_df: pd.DataFrame, tickers_to_remove: list):
             print(f"Error removing tickers: {e}")
         st.rerun()
 
-def main():
-    st.title("🎛️ EquitySchema: ETL Control Center")
-    st.write("Manage the ticker universe and update the data pipeline for the Power BI Galaxy Schema.")
+# --- Dashboard data preparation ---
 
-    # Load tickers
-    tickers_df = load_tickers()
-
+def _fetch_dashboad_data(tickers_df: pd.DataFrame):
+    """
+    Fetches and prepares data for display in the dashboard.
+    Merges tickers with metadata and price log info.
+    """
     # Get info from metadata file
+    cols_to_load = ['Ticker', 'shortName', 'sector']
     if dim_ticker_file.exists():
-        metadata_df = pd.read_csv(dim_ticker_file)
+        try:
+            metadata_df = pd.read_csv(dim_ticker_file, usecols = cols_to_load)
+        except ValueError as e:
+            print(f"Warning: Column mismatch. Loading all columns. {e}")
+            metadata_df = pd.read_csv(dim_ticker_file)
     else:
-        metadata_df = pd.DataFrame(columns=['Ticker'])
+        metadata_df = pd.DataFrame(columns=cols_to_load)
     
     # Find if tickers are missing in metadata
     missing_tickers = tickers_df[~tickers_df['Ticker'].isin(metadata_df['Ticker'])]
@@ -84,7 +89,7 @@ def main():
         with st.spinner(f"Fetching metadata for {len(missing_tickers)} new ticker(s)..."):
             update_stock_metadata(missing_tickers)
             # Reload metadata
-            metadata_df = pd.read_csv(dim_ticker_file)
+            metadata_df = pd.read_csv(dim_ticker_file, usecols = cols_to_load)
     
     # Merge tickers with metadata
     display_df = pd.merge(tickers_df, metadata_df, on='Ticker', how='left')
@@ -97,9 +102,21 @@ def main():
         # This converts {'AAPL': 'Date'} -> [('AAPL', 'Date')]
         log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
         display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
-
-    # Columns to display
+    
+    # Define columns order to display in dashboard
     display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceDate']]
+    return display_df
+
+# --- Main function ---
+
+def main():
+    st.title("🎛️ EquitySchema: ETL Control Center")
+    st.write("Manage the ticker universe and update the data pipeline for the Power BI Galaxy Schema.")
+
+    # Load tickers and fetch data for display
+    tickers_df = load_tickers()
+    display_df = _fetch_dashboad_data(tickers_df)        
+
     # Display table
     st.subheader("Tickers in Database:")
     event = st.dataframe(
@@ -110,22 +127,20 @@ def main():
         selection_mode="multi-row" 
         )
     
-    # Get tickers from selected rows.
+    # Get list of selected tickers from selected rows.
     selected_indices = event.selection.rows # returns a list of numerical indices
     selected_tickers_df = tickers_df.iloc[selected_indices]
-
-    # Get list of selected tickers
     selected_tickers = selected_tickers_df['Ticker'].tolist()
 
-    # Manage tickers list
-    col1, col2 = st.columns([1,2])
+    # Buttons for adding/removing tickers
+    col1, col2 = st.columns([1,5])
     with col1:
-        if st.button("Add Tickers"):
-            _add_tickers_dialog(tickers_df)
-    with col2:
-        if st.button("Remove Selected Tickers", disabled = not selected_tickers):
+        if st.button("Remove Selected Tickers", disabled = not selected_tickers, type = "primary"):
             _remove_tickers_dialog(tickers_df, selected_tickers)
     st.markdown("---")
+    with col2:
+        if st.button("Add Tickers"):
+            _add_tickers_dialog(tickers_df)   
 
     # Update database section
     st.subheader("Update Database")
@@ -134,7 +149,6 @@ def main():
             update_stock_database()
         print("Stock database updated successfully from dashboard.")
         st.rerun()
-
 
 if __name__ == "__main__":
     main()

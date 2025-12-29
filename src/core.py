@@ -126,5 +126,4 @@ def save_tickers(tickers_df: pd.DataFrame, tickers_path: Path = all_tickers_file
     except Exception as e:
         print(f"Error saving tickers: {e}")
 
-
     
