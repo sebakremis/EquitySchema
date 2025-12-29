@@ -86,7 +86,7 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
   cd EquitySchema
   ```
   
-2. Run the main ETL page for database updates and tickers management
+2. Run main.py for tickers management and database updates
 
   ```bash  
   pip install pandas yfinance streamlit
