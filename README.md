@@ -61,9 +61,11 @@ Top-level cards show "Headline Metrics" with conditional formatting to indicate 
 This repository is organized to separate the **ETL Logic** (Python) from the **Analytics Layer** (Power BI). To maintain a lightweight repository, the binary `.pbix` file (containing cached data) is not tracked. Instead, a **Power BI Template (.pbit)** is provided.
 
 ```text
-├── EquitySchema_Template.pbit   # 📊 ENTRY POINT: Power BI Template (Schema & Measures only)
+├── EquitySchema_Template.pbit   # 📊 Power BI Template (Schema & Measures only)
+├── main.py                      # Landing page for updates execution and tickers management (Under Construction)
 ├── src/                         # 🐍 Python ETL scripts
-│   └── etl.py                   # Main script to fetch & update data
+│   └── etl.py                   # Script to fetch & update data
+│   └── core.py                  # Core app functionalities
 ├── data/                        # 💾 Flat file storage (Populated by Python)
 │   ├── all_tickers.csv          # Input list of tickers to track
 │   ├── etfs.csv                 # Input list of ETFs
@@ -74,6 +76,7 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 │       └── prices/              # Fact Table folder: Daily OHLCV data
 └── images/                      # 📸 Screenshots for documentation
 ```
+
 
 ## ⚙️ How to Run Locally
 1. Clone the Repo
