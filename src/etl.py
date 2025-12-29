@@ -1,4 +1,5 @@
 # src/etl.py
+import streamlit as st
 import pandas as pd
 import yfinance as yf
 from .config import (
@@ -306,6 +307,24 @@ def update_stock_financials(tickers_df: pd.DataFrame):
             new_data.to_parquet(financials_file)
             print(f"Financials for {ticker} saved to {financials_file}")
 
+# --- Update execution ---
+
+def update_from_dashboard():
+    """
+    Wrapper function to update stock database from the dashboard.
+    """
+    try:
+        with open(log_file, 'r') as f:
+            last_update = f.readlines()[-1].strip() # get last line
+            st.write(f"Last update:- {last_update}")
+    except FileNotFoundError:
+        st.write("- No updates logged yet.")
+    if st.button("Update All Tickers Data"):
+        with st.spinner("Updating data... This may take a while."):           
+            update_stock_database()
+        print("Stock database updated successfully from dashboard.")
+        st.rerun()
+
 def update_stock_database():    
     """
     Updates both stock prices and metadata databases.
@@ -318,7 +337,7 @@ def update_stock_database():
 
 if __name__ == "__main__":
     """
-    Execution to update stock database.
+    Execution to update stock database from command line.
     """
     update_stock_database()    
   

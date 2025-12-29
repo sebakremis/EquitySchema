@@ -11,6 +11,7 @@ from src.core import (
     load_tickers, save_tickers, add_tickers,
     remove_tickers
 )
+from src.etl import update_from_dashboard
 
 # --- Hide message "Press Ctrl+Enter in st.text_area()" ---
 st.markdown("""
@@ -34,8 +35,8 @@ def _add_tickers_dialog(tickers_df: pd.DataFrame):
     """
     user_input = st.text_area(
         "Tickers to add:",
-        help="Type or pase tickers separated by spaces or commas (e.g., AAPL, MSFT, GOOGL)",
-        height=100
+        help="Type or pase tickers separated by spaces or commas. You can also place each ticker on a new line.",
+        height=200
         )
     if st.button("Submit"):
         try:
@@ -95,8 +96,7 @@ def main():
 
     # Update database section
     st.subheader("Update Database")
-    if st.button("Update Database"):
-        st.info("Database update functionality is not yet implemented.")
+    update_from_dashboard()
 
 
 if __name__ == "__main__":

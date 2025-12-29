@@ -62,7 +62,7 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 
 ```text
 ├── EquitySchema_Template.pbit   # 📊 Power BI Template (Schema & Measures only)
-├── main.py                      # Landing page for updates execution and tickers management (Under Construction)
+├── main.py                      # Landing page 
 ├── src/                         # 🐍 Python ETL scripts
 │   └── etl.py                   # Script to fetch & update data
 │   └── core.py                  # Core app functionalities
@@ -86,11 +86,11 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
   cd EquitySchema
   ```
   
-2. Run the Python ETL
+2. Run the main ETL page for database updates and tickers management
 
   ```bash  
-  pip install pandas yfinance
-  python src/etl.py
+  pip install pandas yfinance streamlit
+  streamlit run main.py
   ```
   
 3. Open the Dashboard in Power BI Desktop
