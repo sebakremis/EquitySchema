@@ -12,7 +12,7 @@ from src.core import (
     remove_tickers
 )
 from src.etl import update_stock_database, update_stock_metadata
-from src.config import dim_ticker_file, prices_log_file
+from src.config import dim_ticker_file, prices_log_file, stocks_folder
 
 # --- Hide message "Press Ctrl+Enter in st.text_area()" ---
 st.markdown("""
@@ -103,8 +103,13 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
         log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
         display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
     
+    # Add financialsData column: check if financials file for the ticker exists in database
+    display_df["financialsData"] = display_df["Ticker"].apply(
+        lambda x: "Yes" if (stocks_folder / 'financials' / f"{x}.parquet").exists() else "Nope"
+    )
+
     # Define columns order to display in dashboard
-    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceDate']]
+    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceDate', 'financialsData']]
     return display_df
 
 # --- Main function ---
@@ -115,7 +120,8 @@ def main():
 
     # Load tickers and fetch data for display
     tickers_df = load_tickers()
-    display_df = _fetch_dashboad_data(tickers_df)        
+    display_df = _fetch_dashboad_data(tickers_df)
+          
 
     # Display table
     st.subheader("Tickers in Database:")
@@ -126,7 +132,9 @@ def main():
         on_select= "rerun",
         selection_mode="multi-row" 
         )
-    
+    # Count of tickers
+    st.markdown(f"**Count of tickers:** {len(tickers_df)}")  
+
     # Get list of selected tickers from selected rows.
     selected_indices = event.selection.rows # returns a list of numerical indices
     selected_tickers_df = tickers_df.iloc[selected_indices]

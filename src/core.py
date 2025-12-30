@@ -6,9 +6,11 @@ import pandas as pd
 import json
 import yfinance as yf
 from pathlib import Path
-from src.config import all_tickers_file, prices_log_file, stocks_folder
-
-# --- Tickers management functions ---
+from src.config import (
+    all_tickers_file, prices_log_file, stocks_folder,
+    dim_ticker_file
+)
+# --- Ticker management functions ---
 
 def load_tickers(tickers_path: Path = all_tickers_file) -> pd.DataFrame:
     """
@@ -40,7 +42,7 @@ def add_tickers(new_tickers_str: str, tickers_df: pd.DataFrame) -> pd.DataFrame:
     """
     new_tickers = [ticker.strip().upper() for ticker in new_tickers_str.replace(",", " ").split() if ticker.strip() and ticker.strip().upper() not in tickers_df["Ticker"].values]
     
-    # Tickers validation
+    # Ticker validation
     valid_tickers = []
     for ticker in new_tickers:
         try:
@@ -81,7 +83,7 @@ def remove_tickers(tickers_df: pd.DataFrame, tickers_to_remove: list) -> pd.Data
 
     updated_tickers_df = tickers_df[~tickers_df["Ticker"].isin(valid_removals)].reset_index(drop=True)
 
-    # Remove from JSON log
+    # Remove from prices log file (JSON)
     if prices_log_file.exists():
         try:
             with open(prices_log_file, 'r') as f:
@@ -99,20 +101,36 @@ def remove_tickers(tickers_df: pd.DataFrame, tickers_to_remove: list) -> pd.Data
         except Exception as e:
             print(f"Error updating prices log: {e}")
             
-    # Delete ticker data files
+    # Delete ticker data files in separated try-except blocks
     for ticker in valid_removals:
+        # remove from metadata file
         try:
-            # Remove price file
+            metadata_file = dim_ticker_file
+            if metadata_file.exists():
+                metadata_df = pd.read_csv(metadata_file)
+                if ticker in metadata_df['Ticker'].values:
+                    metadata_df = metadata_df[metadata_df['Ticker'] != ticker]
+                    metadata_df.to_csv(metadata_file, index=False)
+                    print(f"Removed ticker {ticker} from metadata file.")
+        except Exception as e:
+            print(f"Could not delete metadata file for ticker {ticker}: {e}")
+
+        # remove prices file
+        try:
             price_file = stocks_folder / 'prices' / f"{ticker}.parquet"
             if price_file.exists():
-                price_file.unlink()
-            # Remove financials file
+                price_file.unlink()           
+            print(f"Deleted price file for ticker {ticker}.")
+        except Exception as e:
+            print(f"Could not delete price file for ticker {ticker}: {e}")  
+
+        # Remove financials file
+        try:
             financials_file = stocks_folder / 'financials' / f"{ticker}.parquet"
             if financials_file.exists():
                 financials_file.unlink()
-            print(f"Deleted data files for ticker {ticker}.")
         except Exception as e:
-            print(f"Error deleting data file for ticker {ticker}: {e}")
+            print(f"Could not delete financials file for ticker {ticker}: {e}") 
 
     return updated_tickers_df
 
