@@ -5,13 +5,14 @@ ETL framework for equity markets, extracts historical pricing and metadata via P
 ![Power BI Dashboard](images/nvda_analysis_annual.png)
 
 ## 📌 Project Overview
-**EquitySchema** is a full-stack data analytics project designed to visualize the correlation between equity price action and corporate fundamentals. 
+**EquitySchema** is a full-stack data analytics project designed to analyze equity prices and financial data for stocks and ETFs from a local database. 
 
 The core challenge addressed is the **"Granularity Mismatch"** in financial data: Stock prices move daily (or millisecondly), while revenue/earnings are reported quarterly or annually. This project builds a robust **Galaxy Schema** in Power BI to bridge these two timelines, allowing for seamless analysis of how fundamental performance drives (or lags) stock valuation.
 
 ## 🏗 Architecture & Tech Stack
 
 * **ETL Pipeline:** Python (`yfinance`, `pandas`)
+* **ETL Control Center:** Python (`streamlit`)
 * **Data Modeling:** Power BI (Galaxy Schema)
 * **Analytics:** DAX (Time Intelligence, Dynamic Granularity)
 * **Visualization:** Power BI (Drill-down hierarchies, KPI Cards)
@@ -25,7 +26,7 @@ The core challenge addressed is the **"Granularity Mismatch"** in financial data
 3.  **Loading:** Exports processed data to CSV/Parquet for Power BI ingestion.
 
 ## 🧠 Data Model: The Galaxy Schema
-Instead of a simple flat file, this project uses a professional **Galaxy Schema** (Multiple Fact Tables) to ensure accurate filtering and performance.
+Instead of a simple flat file, this project uses a **Galaxy Schema** (Multiple Fact Tables) to ensure accurate filtering and performance.
 
 * **Fact Tables:**
     * `fact_Prices`: Daily granularity (Open, Close, Volume).
