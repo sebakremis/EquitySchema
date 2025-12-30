@@ -70,7 +70,7 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
     Fetches and prepares data for display in the dashboard.
     Optimized for performance: 
     1. Uses Lazy Loading for metadata (no blocking API calls).
-    2. Vectorized check for file existence.
+    2. Vectorized check for Financials file existence.
     """
     # Load metadata (if available)
     cols_to_load = ['Ticker', 'shortName', 'sector']
