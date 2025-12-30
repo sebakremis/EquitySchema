@@ -113,51 +113,123 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
             
     return display_df[final_cols]
 
+# --- Data Explorer ---
+
+def _render_explorer(tickers_df: pd.DataFrame):
+    """
+    Render the Raw Data Explorer tab.
+    Allows viewing Metadata (CSV) or Prices/Financials (Parquet).
+    """
+    st.subheader("🔍 Raw Data Explorer")
+    
+    # 1. Select Dataset Type
+    dataset_type = st.radio(
+        "Select Dataset:", 
+        ["Metadata (Dimension)", "Stock Prices (Fact)", "Financials (Fact)"],
+        horizontal=True
+    )
+
+    # 2. Logic for Metadata (Single File)
+    if dataset_type == "Metadata (Dimension)":
+        if dim_ticker_file.exists():
+            df = pd.read_csv(dim_ticker_file)
+            st.markdown(f"**Records:** {len(df)}")
+            st.dataframe(df, width='stretch')
+        else:
+            st.warning("⚠️ Metadata file (dim_ticker.csv) not found.")
+
+    # 3. Logic for Fact Tables (One file per Ticker)
+    else:
+        # Select Ticker
+        selected_ticker = st.selectbox(
+            "Select Ticker:", 
+            tickers_df['Ticker'].sort_values(), 
+            width = 100
+            )
+        
+        if selected_ticker:
+            # Determine Path based on selection
+            if "Prices" in dataset_type:
+                target_file = stocks_folder / 'prices' / f"{selected_ticker}.parquet"
+            else:
+                target_file = stocks_folder / 'financials' / f"{selected_ticker}.parquet"
+
+            # Load and Display
+            if target_file.exists():
+                try:
+                    df = pd.read_parquet(target_file)
+                    
+                    # metrics
+                    col1, col2, col3 = st.columns(3)
+                    with col1: st.metric("Rows", len(df))
+                    with col2: st.metric("Columns", len(df.columns))
+                    if "Prices" in dataset_type:
+                        # Show date range for prices
+                        min_date = df.index.min().date() if isinstance(df.index, pd.DatetimeIndex) else df['Date'].min().date()
+                        max_date = df.index.max().date() if isinstance(df.index, pd.DatetimeIndex) else df['Date'].max().date()
+                        with col3: st.write(f"**Range:** {min_date} to {max_date}")
+
+                    st.dataframe(df, width='stretch')
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+            else:
+                st.info(f"ℹ️ No {dataset_type} data found for **{selected_ticker}**.")
+
+
 # --- Main function ---
 
 def main():
     st.title("🎛️ EquitySchema: ETL Control Center")
     st.write("Manage the ticker universe and update the data pipeline for the Power BI Galaxy Schema.")
 
-    # Load tickers and fetch data for display
+    # Load tickers for both tabs
     tickers_df = load_tickers()
-    display_df = _fetch_dashboad_data(tickers_df)
-          
 
-    # Display table
-    st.subheader("Tickers in Database:")
-    event = st.dataframe(
-        display_df,
-        hide_index=True,
-        width = 850,
-        on_select= "rerun",
-        selection_mode="multi-row" 
-        )
-    # Count of tickers
-    st.markdown(f"**Count of tickers:** {len(tickers_df)}")  
+    # Create tabs
+    tab_main, tab_explore = st.tabs(["⚙️ Main Panel", "💾 Data Explorer"])
 
-    # Get list of selected tickers from selected rows.
-    selected_indices = event.selection.rows # returns a list of numerical indices
-    selected_tickers_df = tickers_df.iloc[selected_indices]
-    selected_tickers = selected_tickers_df['Ticker'].tolist()
+    # --- Tab 1: Operations ---
+    with tab_main:
+        display_df = _fetch_dashboad_data(tickers_df)
+            
+        # Display table
+        st.subheader("Tickers in Database:")
+        event = st.dataframe(
+            display_df,
+            hide_index=True,
+            width = 850,
+            on_select= "rerun",
+            selection_mode="multi-row" 
+            )
+        # Count of tickers
+        st.markdown(f"**Count of tickers:** {len(tickers_df)}")  
 
-    # Buttons for adding/removing tickers
-    col1, col2 = st.columns([1,5])
-    with col1:
-        if st.button("Remove Selected Tickers", disabled = not selected_tickers, type = "primary"):
-            _remove_tickers_dialog(tickers_df, selected_tickers)
-    st.markdown("---")
-    with col2:
-        if st.button("Add Tickers"):
-            _add_tickers_dialog(tickers_df)   
+        # Get list of selected tickers from selected rows.
+        selected_indices = event.selection.rows # returns a list of numerical indices
+        selected_tickers_df = tickers_df.iloc[selected_indices]
+        selected_tickers = selected_tickers_df['Ticker'].tolist()
 
-    # Update database section
-    st.subheader("Update Database")
-    if st.button("Update All Tickers Data"):
-        with st.spinner("Updating data... This may take a while."):           
-            update_stock_database()
-        print("Stock database updated successfully from dashboard.")
-        st.rerun()
+        # Buttons for adding/removing tickers
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("Remove Selected Tickers", disabled = not selected_tickers, type = "primary"):
+                _remove_tickers_dialog(tickers_df, selected_tickers)
+        st.markdown("---")
+        with col2:
+            if st.button("Add Tickers"):
+                _add_tickers_dialog(tickers_df)   
+
+        # Update database section
+        st.subheader("Update Database")
+        if st.button("Update All Tickers Data"):
+            with st.spinner("Updating data... This may take a while."):           
+                update_stock_database()
+            print("Stock database updated successfully from dashboard.")
+            st.rerun()
+
+    # --- Tab 2: Data Explorer ---
+    with tab_explore:
+        _render_explorer(tickers_df)
 
 if __name__ == "__main__":
     main()
