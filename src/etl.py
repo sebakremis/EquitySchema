@@ -259,14 +259,20 @@ def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
 
     # Load existing CSV
     if dim_ticker_file.exists():
-        existing_metadata = pd.read_csv(dim_ticker_file)
+        try:
+            existing_metadata = pd.read_csv(dim_ticker_file)
+        except Exception as e:
+            print(f"Error reading metadata file: {e}. Starting fresh.")
+            existing_metadata = pd.DataFrame(columns=['Ticker', 'lastUpdated'])
     else:
+        # Recovery Mode
+        print(f"⚠️  {dim_ticker_file.name} is missing. Starting full metadata rebuild for {len(tickers_df)} tickers...")
         existing_metadata = pd.DataFrame(columns=['Ticker', 'lastUpdated'])
 
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
         
-        # 7-Day Optimization Logic
+        # Check if we have fresh data (7-day rule)
         if ticker in existing_metadata['Ticker'].values:
             last_updated_vals = existing_metadata.loc[existing_metadata['Ticker'] == ticker, 'lastUpdated'].values
             
@@ -280,7 +286,7 @@ def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass # Date parsing failed, fetch new data
 
-        # Fetch new data (because it's missing or old)
+        # Fetch new data (Missing file, missing ticker, or old data)
         ticker_metadata = fetch_metadata(ticker)
         
         if ticker_metadata:
@@ -288,7 +294,7 @@ def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
             ticker_metadata['lastUpdated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
             metadata_list.append(ticker_metadata)
 
-    # Save to CSV if we found new data
+    # Save changes
     if metadata_list:
         new_metadata_df = pd.DataFrame(metadata_list)
         
@@ -300,10 +306,10 @@ def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
             combined_metadata = new_metadata_df
             
         combined_metadata.to_csv(dim_ticker_file, index=False)
-        print(f"Dimension table updated.")
+        print(f"✅ Dimension table updated with {len(new_metadata_df)} new/updated records.")
         return combined_metadata
     else:
-        print("No metadata updates needed (all < 7 days old).")
+        print("No metadata updates needed (all local data is < 7 days old).")
         return existing_metadata
 
 
