@@ -28,7 +28,7 @@ The core challenge addressed is the **"Granularity Mismatch"** in financial data
     * **Ticker Management:** Visual interface to add or remove stocks from the tracking universe.
     * **Monitoring:** Real-time status of data freshness (Last Price Date) and metadata completeness.
     * **Execution:** Triggers the full ETL update process (Price, Metadata, and Financials) with a single click.
-    * **Explore Data:** The tab 💾 Data Explorer displays the raw data that is currently in the database, showing the count of rows and columns as well as the time range for prices.
+    * **Explore Data:** The **Data Explorer** tab displays the raw data that is currently in the database, showing the count of rows and columns as well as the time range for prices.
 
 ## 🧠 Data Model: The Galaxy Schema
 Instead of a simple flat file, this project uses a **Galaxy Schema** (Multiple Fact Tables) to ensure accurate filtering and performance.
