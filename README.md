@@ -5,7 +5,7 @@ ETL framework for equity markets, extracts historical pricing and metadata via P
 ![Power BI Dashboard](images/nvda_analysis_annual.png)
 
 ## 📌 Project Overview
-**EquitySchema** is a full-stack data analytics project designed to analyze equity prices and financial data for stocks and ETFs from a local database. 
+**EquitySchema** is a full-stack data analytics project designed to analyze equity prices and financial data for stocks from a local database. 
 
 The core challenge addressed is the **"Granularity Mismatch"** in financial data: Stock prices move daily (or millisecondly), while revenue/earnings are reported quarterly or annually. This project builds a robust **Galaxy Schema** in Power BI to bridge these two timelines, allowing for seamless analysis of how fundamental performance drives (or lags) stock valuation.
 
@@ -24,6 +24,10 @@ The core challenge addressed is the **"Granularity Mismatch"** in financial data
     * Normalizes "Wide" financial data into "Long/Tidy" format for analysis.
     * **Data Stewardship:** Implements a backfill strategy to handle missing API historical data (e.g., manually appending 2020-2021 SEC filing data for NVDA).
 3.  **Loading:** Exports processed data to CSV/Parquet for Power BI ingestion.
+4.  **Orchestration:** A Streamlit dashboard (`main.py`) serves as the Control Center for the pipeline, enabling:
+    * **Ticker Management:** Visual interface to add or remove stocks from the tracking universe.
+    * **Monitoring:** Real-time status of data freshness (Last Price Date) and metadata completeness.
+    * **Execution:** Triggers the full ETL update process (Price, Metadata, and Financials) with a single click.
 
 ## 🧠 Data Model: The Galaxy Schema
 Instead of a simple flat file, this project uses a **Galaxy Schema** (Multiple Fact Tables) to ensure accurate filtering and performance.
@@ -63,7 +67,7 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 
 ```text
 ├── EquitySchema_Template.pbit   # 📊 Power BI Template (Schema & Measures only)
-├── main.py                      # Landing page 
+├── main.py                      # ETL Control Center 
 ├── src/                         # 🐍 Python ETL scripts
 │   └── etl.py                   # Script to fetch & update data
 │   └── core.py                  # Core app functionalities
@@ -77,7 +81,6 @@ This repository is organized to separate the **ETL Logic** (Python) from the **A
 │       └── prices/              # Fact Table folder: Daily OHLCV data
 └── images/                      # 📸 Screenshots for documentation
 ```
-
 
 ## ⚙️ How to Run Locally
 1. Clone the Repo
