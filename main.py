@@ -1,7 +1,7 @@
 """
 main.py
 
-Landing page module.
+ETL Control Center
 Contains the main function to update the database and manage the tickers list.
 """
 import streamlit as st

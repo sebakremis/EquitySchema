@@ -14,25 +14,45 @@ from src.config import (
 
 def load_tickers(tickers_path: Path = all_tickers_file) -> pd.DataFrame:
     """
-    Loads tickers from a single CSV file (all_tickers_file by default).
-    Returns a DataFrame with a 'Ticker' column.
-    """   
-    tickers_df = pd.DataFrame()
+    Loads tickers from CSV. 
+    If CSV is missing, attempts to reconstruct the list from existing price data files.
+    """
+    # Try to load from the standard CSV
+    if tickers_path.exists():
+        try:
+            tickers_df = pd.read_csv(tickers_path)
+            if not tickers_df.empty and 'Ticker' in tickers_df.columns:
+                return tickers_df
+        except Exception as e:
+            print(f"Warning: Could not read ticker file. {e}")
 
-    try:
-        tickers_df = pd.read_csv(all_tickers_file)
-    except FileNotFoundError:
-        print(f"Error loading tickers: File not found at {all_tickers_file}")
-        return pd.DataFrame(columns=['Ticker'])
-    except Exception as e:
-        print(f"Error loading tickers: {e}")
-        return pd.DataFrame(columns=['Ticker'])
-
-    if tickers_df.empty or 'Ticker' not in tickers_df.columns:
-        print(f"No tickers found in {all_tickers_file}.")
-        return pd.DataFrame(columns=['Ticker'])
+    # Recovery Mode: Scan the prices folder
+    print(f"Ticker file not found or invalid at {tickers_path}. Attempting recovery...")
+    
+    prices_dir = stocks_folder / 'prices'
+    
+    if prices_dir.exists():
+        # Extract ticker symbols from filenames
+        recovered_tickers = sorted(list({f.stem for f in prices_dir.glob("*.parquet")}))
         
-    return tickers_df
+        if recovered_tickers:
+            print(f"♻️  Recovered {len(recovered_tickers)} tickers from local data files.")
+            
+            # Create DataFrame
+            recovered_df = pd.DataFrame(recovered_tickers, columns=['Ticker'])
+            
+            # Auto-heal: Save the reconstructed list back to CSV
+            try:
+                recovered_df.to_csv(tickers_path, index=False)
+                print("✅ Tickers file restored successfully.")
+            except Exception as e:
+                print(f"Warning: Could not save restored tickers. {e}")
+                
+            return recovered_df
+
+    # Fallback: Return empty if recovery failed
+    print("No tickers found and recovery failed.")
+    return pd.DataFrame(columns=['Ticker'])
 
 def add_tickers(new_tickers_str: str, tickers_df: pd.DataFrame) -> pd.DataFrame:
     """
