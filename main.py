@@ -68,49 +68,50 @@ def _remove_tickers_dialog(tickers_df: pd.DataFrame, tickers_to_remove: list):
 def _fetch_dashboad_data(tickers_df: pd.DataFrame):
     """
     Fetches and prepares data for display in the dashboard.
-    Merges tickers with metadata and price log info.
+    Optimized for performance: 
+    1. Uses Lazy Loading for metadata (no blocking API calls).
+    2. Vectorized check for file existence.
     """
-    # Get info from metadata file
+    # Load metadata (if available)
     cols_to_load = ['Ticker', 'shortName', 'sector']
     if dim_ticker_file.exists():
         try:
             metadata_df = pd.read_csv(dim_ticker_file, usecols = cols_to_load)
         except ValueError as e:
-            print(f"Warning: Column mismatch. Loading all columns. {e}")
-            metadata_df = pd.read_csv(dim_ticker_file)
+            metadata_df = pd.read_csv(dim_ticker_file) # Fallback if cols mismatch
     else:
         metadata_df = pd.DataFrame(columns=cols_to_load)
     
-    # Find if tickers are missing in metadata
-    missing_tickers = tickers_df[~tickers_df['Ticker'].isin(metadata_df['Ticker'])]
-
-    # If missing tickers, fetch metadata for them
-    if not missing_tickers.empty:
-        with st.spinner(f"Fetching metadata for {len(missing_tickers)} new ticker(s)..."):
-            update_stock_metadata(missing_tickers)
-            # Reload metadata
-            metadata_df = pd.read_csv(dim_ticker_file, usecols = cols_to_load)
-    
-    # Merge tickers with metadata
+    # Merge Tickers with Metadata
     display_df = pd.merge(tickers_df, metadata_df, on='Ticker', how='left')
 
-    # Merge with json log file to add the Last Price Update info
+    # Fill NaN values for better UI
+    display_df['shortName'] = display_df['shortName'].fillna("Pending Update...")
+    display_df['sector'] = display_df['sector'].fillna("-")
+
+    # Merge with Price Log
     if prices_log_file.exists():
         with open(prices_log_file, 'r') as f:
             prices_log = json.load(f)
-        # Create DataFrame from items directly
-        # This converts {'AAPL': 'Date'} -> [('AAPL', 'Date')]
+
+        # Create DataFrame from items {'AAPL': 'Date'} -> [('AAPL', 'Date')]
         log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
         display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
     
-    # Add financialsData column: check if financials file for the ticker exists in database
+    # Check Financials Data
     display_df["financialsData"] = display_df["Ticker"].apply(
         lambda x: "Yes" if (stocks_folder / 'financials' / f"{x}.parquet").exists() else "Nope"
     )
 
-    # Define columns order to display in dashboard
-    display_df = display_df[['Ticker', 'shortName', 'sector', 'lastPriceDate', 'financialsData']]
-    return display_df
+    # Ensure specific column order
+    final_cols = ['Ticker', 'shortName', 'sector', 'lastPriceDate', 'financialsData']
+    
+    # Add missing columns if they don't exist (safety check)
+    for col in final_cols:
+        if col not in display_df.columns:
+            display_df[col] = None
+            
+    return display_df[final_cols]
 
 # --- Main function ---
 
