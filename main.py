@@ -6,12 +6,11 @@ Contains the main function to update the database and manage the tickers list.
 """
 import streamlit as st
 import pandas as pd
-import json
 from src.core import (
     load_tickers, save_tickers, add_tickers,
     remove_tickers
 )
-from src.etl import update_stock_database, update_stock_metadata
+from src.etl import update_stock_database, load_prices_log
 from src.config import dim_ticker_file, prices_log_file, stocks_folder
 
 # --- Hide message "Press Ctrl+Enter in st.text_area()" ---
@@ -90,13 +89,11 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
     display_df['sector'] = display_df['sector'].fillna("-")
 
     # Merge with Price Log
-    if prices_log_file.exists():
-        with open(prices_log_file, 'r') as f:
-            prices_log = json.load(f)
+    prices_log = load_prices_log()    
 
-        # Create DataFrame from items {'AAPL': 'Date'} -> [('AAPL', 'Date')]
-        log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
-        display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
+    # Create DataFrame from items {'AAPL': 'Date'} -> [('AAPL', 'Date')]
+    log_df = pd.DataFrame(list(prices_log.items()), columns=['Ticker', 'lastPriceDate'])
+    display_df = pd.merge(display_df, log_df, on='Ticker', how='left')
     
     # Check Financials Data
     display_df["financialsData"] = display_df["Ticker"].apply(
@@ -120,7 +117,7 @@ def _render_explorer(tickers_df: pd.DataFrame):
     Render the Raw Data Explorer tab.
     Allows viewing Metadata (CSV) or Prices/Financials (Parquet).
     """
-    st.subheader("🔍 Raw Data Explorer")
+    st.subheader("🔍 Data Explorer")
     
     # 1. Select Dataset Type
     dataset_type = st.radio(

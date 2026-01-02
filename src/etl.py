@@ -10,11 +10,38 @@ from src.core import load_tickers
 
 # --- Helper Functions for Log ---
 def load_prices_log() -> dict:
+    """
+    Loads the prices log and syncs it with the filesystem.
+    If a parquet file is missing, the log entry is removed immediately.
+    """
     if prices_log_file.exists():
         try:
             with open(prices_log_file, 'r') as f:
-                return json.load(f)
-        except Exception:
+                log_data = json.load(f)
+            
+            # Sync logic
+            prices_folder = stocks_folder / 'prices'
+            clean_log = {}
+            log_modified = False
+
+            for ticker, date_str in log_data.items():
+                file_path = prices_folder / f"{ticker}.parquet"
+                
+                # Only keep the entry if the file actually exists
+                if file_path.exists():
+                    clean_log[ticker] = date_str
+                else:
+                    log_modified = True # Mark for update
+            
+            # If we cleaned up any entries, save the file back to disk
+            if log_modified:
+                save_prices_log(clean_log)
+                print(f"♻️  Synchronized prices log: Removed entries for missing files.")
+                return clean_log
+
+            return log_data
+        except Exception as e:
+            print(f"Error loading log: {e}")
             return {}
     return {}
 
@@ -27,7 +54,7 @@ def save_prices_log(log_dict: dict):
 def fetch_prices(ticker: str, period: str = None, start: str = None, interval: str = '1d') -> pd.DataFrame:
     """
     Fetch historical data for a given ticker using yfinance.
-    Now includes 'Ticker' column for Star Schema linkage.
+    Includes 'Ticker' as a column for Star Schema linkage.
     """
     data = pd.DataFrame()
     try:
@@ -52,12 +79,34 @@ def fetch_prices(ticker: str, period: str = None, start: str = None, interval: s
             'Dividends': 'dividends',
             'Stock Splits': 'stockSplits'
         }, inplace=True)
+
+        # Cleaning: enforce numeric types before adding string columns
+        data = data.apply(pd.to_numeric, errors='coerce')
+
+        # Anomaly detection: prices cannot be 0 or negative. Volume cannot be negative
+        price_cols = ['open', 'high', 'low', 'close']
+        # Ensure columns exist before processing
+        cols_to_check = [c for c in price_cols if c in data.columns]
+        
+        if cols_to_check:
+            # Replace <= 0 with NaN in price columns
+            data[cols_to_check] = data[cols_to_check].mask(data[cols_to_check] <= 0)
+        
+        if 'volume' in data.columns:
+            # Replace < 0 with NaN in volume (0 volume is valid for holidays)
+            data['volume'] = data['volume'].mask(data['volume'] < 0)
         
         # Add ticker column for using it as a Foreign Key
         data['Ticker'] = ticker
         
         # Reset index so 'Date' becomes a column
         data.reset_index(inplace=True)
+
+        # Sort by date to ensure fill works chronologically
+        data.sort_values('Date', inplace=True)
+
+        # Forward fill missing prices
+        data.ffill(inplace=True)
 
         return data
     except Exception as e:
@@ -177,11 +226,11 @@ def update_stock_prices(tickers_df: pd.DataFrame):
         # Determine the last date we possess
         last_date_str = prices_log.get(ticker)
         last_date = None
-
+            
         if last_date_str:
             last_date = pd.to_datetime(last_date_str).date()
         elif stock_prices_file.exists():
-            # Fallback: File exists but not in JSON (first run)
+            # Fallback: File exists but not in JSON (e.g. first run after restore)
             try:
                 existing_data = pd.read_parquet(stock_prices_file)
                 if not existing_data.empty:
@@ -196,7 +245,7 @@ def update_stock_prices(tickers_df: pd.DataFrame):
                     prices_log[ticker] = str(last_date)
                     log_updated = True
             except Exception:
-                pass 
+                pass
 
         # Check if we need to fetch new data
         today = pd.Timestamp.now().date()
@@ -235,6 +284,17 @@ def update_stock_prices(tickers_df: pd.DataFrame):
                         updated_data = updated_data[~updated_data.index.duplicated(keep='last')]
                     else:
                         updated_data = new_data
+
+                    # --- Schema enforcement ---
+                    # Force volume to Integer, filling NaNs first
+                    if 'volume' in updated_data.columns:
+                        updated_data['volume'] = updated_data['volume'].fillna(0).astype('int64')
+
+                    # Force Prices to Float
+                    float_cols = ['open', 'high', 'low', 'close', 'dividends', 'stockSplits']
+                    for col in float_cols:
+                        if col in updated_data.columns:
+                            updated_data[col] = updated_data[col].astype('float64')
 
                     # Save
                     updated_data.reset_index(inplace=True)
