@@ -35,7 +35,7 @@ def _add_tickers_dialog(tickers_df: pd.DataFrame):
     """
     user_input = st.text_area(
         "Tickers to add:",
-        help="Type or pase tickers separated by spaces or commas. You can also place each ticker on a new line.",
+        help="Type or paste tickers separated by spaces or commas. You can also place each ticker on a new line.",
         height=200
         )
     if st.button("Submit"):
@@ -84,10 +84,6 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
     # Merge Tickers with Metadata
     display_df = pd.merge(tickers_df, metadata_df, on='Ticker', how='left')
 
-    # Fill NaN values for better UI
-    display_df['shortName'] = display_df['shortName'].fillna("Pending Update...")
-    display_df['sector'] = display_df['sector'].fillna("-")
-
     # Merge with Price Log
     prices_log = load_prices_log()    
 
@@ -99,6 +95,10 @@ def _fetch_dashboad_data(tickers_df: pd.DataFrame):
     display_df["financialsData"] = display_df["Ticker"].apply(
         lambda x: "Yes" if (stocks_folder / 'financials' / f"{x}.parquet").exists() else "Nope"
     )
+    # Fill NaN values for better UI
+    display_df['shortName'] = display_df['shortName'].fillna("Pending Update...")
+    display_df['sector'] = display_df['sector'].fillna("-")
+    display_df['lastPriceDate'] = display_df['lastPriceDate'].fillna("Pending Update...")
 
     # Ensure specific column order
     final_cols = ['Ticker', 'shortName', 'sector', 'lastPriceDate', 'financialsData']
@@ -185,7 +185,7 @@ def main():
     # Create tabs
     tab_main, tab_explore = st.tabs(["⚙️ Main Panel", "💾 Data Explorer"])
 
-    # --- Tab 1: Operations ---
+    # --- Tab 1: Main ---
     with tab_main:
         display_df = _fetch_dashboad_data(tickers_df)
             

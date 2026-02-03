@@ -49,69 +49,64 @@ def save_prices_log(log_dict: dict):
     with open(prices_log_file, 'w') as f:
         json.dump(log_dict, f, indent=4)
 
+# --- Vectorized Cleaning Function ---
+
+def clean_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Applies data quality rules and anomaly detection to a combined DataFrame.
+    Handles multiple tickers simultaneously using vectorized operations.
+    """
+    if df.empty:
+        return df
+
+    # Enforce numeric types for price and volume columns 
+    numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'stockSplits']
+    cols_present = [c for c in numeric_cols if c in df.columns]
+    df[cols_present] = df[cols_present].apply(pd.to_numeric, errors='coerce')
+
+    # Anomaly detection: Mask non-positive prices and negative volumes 
+    price_cols = ['open', 'high', 'low', 'close']
+    valid_prices = [c for c in price_cols if c in df.columns]
+    if valid_prices:
+        df[valid_prices] = df[valid_prices].mask(df[valid_prices] <= 0)
+    
+    if 'volume' in df.columns:
+        df['volume'] = df['volume'].mask(df['volume'] < 0)
+    
+    # Ensure chronological order and forward fill within ticker groups to prevent data leakage 
+    df = df.sort_values(['Ticker', 'Date'])
+    df = df.groupby('Ticker', group_keys=False).apply(lambda x: x.ffill(limit=5))
+
+    return df
+
 # --- Data Extraction Functions ---
   
 def fetch_prices(ticker: str, period: str = None, start: str = None, interval: str = '1d') -> pd.DataFrame:
-    """
-    Fetch historical data for a given ticker using yfinance.
-    Includes 'Ticker' as a column for Star Schema linkage.
-    """
-    data = pd.DataFrame()
+    """Fetches raw data and renames columns for schema alignment."""
     try:
         yf_ticker = yf.Ticker(ticker)
-        if period:
-            data = yf_ticker.history(period=period, interval=interval)
-        elif start:
-            data = yf_ticker.history(start=start, interval=interval)
-        else:
-            raise ValueError("Either 'period' or 'start' must be provided.")
+        data = yf_ticker.history(period=period, start=start, interval=interval) if period or start else pd.DataFrame()
         
         if data.empty:
             return pd.DataFrame()
 
-        # Format column names
         data.rename(columns={
-            'Open': 'open',
-            'High': 'high',
-            'Low': 'low',
-            'Close': 'close',
-            'Volume': 'volume',
-            'Dividends': 'dividends',
-            'Stock Splits': 'stockSplits'
+            'Open': 'open', 'High': 'high', 'Low': 'low',
+            'Close': 'close', 'Volume': 'volume',
+            'Dividends': 'dividends', 'Stock Splits': 'stockSplits'
         }, inplace=True)
 
-        # Cleaning: enforce numeric types before adding string columns
-        data = data.apply(pd.to_numeric, errors='coerce')
-
-        # Anomaly detection: prices cannot be 0 or negative. Volume cannot be negative
-        price_cols = ['open', 'high', 'low', 'close']
-        # Ensure columns exist before processing
-        cols_to_check = [c for c in price_cols if c in data.columns]
-        
-        if cols_to_check:
-            # Replace <= 0 with NaN in price columns
-            data[cols_to_check] = data[cols_to_check].mask(data[cols_to_check] <= 0)
-        
-        if 'volume' in data.columns:
-            # Replace < 0 with NaN in volume (0 volume is valid for holidays)
-            data['volume'] = data['volume'].mask(data['volume'] < 0)
-        
-        # Add ticker column for using it as a Foreign Key
         data['Ticker'] = ticker
-        
-        # Reset index so 'Date' becomes a column
         data.reset_index(inplace=True)
-
-        # Sort by date to ensure fill works chronologically
-        data.sort_values('Date', inplace=True)
-
-        # Forward fill missing prices
-        data.ffill(inplace=True)
-
+        # Ensure 'Date' is timezone-naive for Parquet compatibility 
+        if data['Date'].dt.tz is not None:
+            data['Date'] = data['Date'].dt.tz_localize(None)
+            
         return data
     except Exception as e:
-        print(f"Error fetching data for ticker {ticker}: {e}")
+        print(f"Error fetching {ticker}: {e}")
         return pd.DataFrame()
+
 
 def fetch_metadata(ticker: str) -> dict:
     """
@@ -207,108 +202,54 @@ def fetch_financials(ticker: str) -> pd.DataFrame:
 
 def update_stock_prices(tickers_df: pd.DataFrame):
     """
-    Updates stock prices using a JSON log to track the last available date.
+    Updates stock prices using batch extraction and vectorized cleaning.
+    Enforces a strict 5-year rolling window for the Galaxy Schema.
     """
     prices_folder = stocks_folder / 'prices'
     prices_folder.mkdir(parents=True, exist_ok=True)
-    
-    # Load the "Index" of what we have
     prices_log = load_prices_log()
-    log_updated = False
     
-    # 5-year cutoff (Naive)
+    all_new_data = []
     cutoff_date = pd.Timestamp.now().normalize() - pd.DateOffset(years=5)
 
+    # Phase 1: Extraction
     for _, row in tickers_df.iterrows():
         ticker = row['Ticker']
+        last_date_str = prices_log.get(ticker)
+        start_date = pd.to_datetime(last_date_str) + pd.Timedelta(days=1) if last_date_str else cutoff_date
+
+        if start_date.date() <= pd.Timestamp.now().date():
+            new_data = fetch_prices(ticker, start=start_date.strftime('%Y-%m-%d'))
+            if not new_data.empty:
+                all_new_data.append(new_data)
+
+    if not all_new_data:
+        print("Database is already up to date.")
+        return
+
+    # Phase 2: Vectorized Cleaning
+    combined_new_df = pd.concat(all_new_data)
+    cleaned_new_df = clean_prices(combined_new_df)
+
+    # Phase 3: Distribution and Persistence
+    for ticker in cleaned_new_df['Ticker'].unique():
+        ticker_new_data = cleaned_new_df[cleaned_new_df['Ticker'] == ticker].copy()
         stock_prices_file = prices_folder / f"{ticker}.parquet"
         
-        # Determine the last date we possess
-        last_date_str = prices_log.get(ticker)
-        last_date = None
-            
-        if last_date_str:
-            last_date = pd.to_datetime(last_date_str).date()
-        elif stock_prices_file.exists():
-            # Fallback: File exists but not in JSON (e.g. first run after restore)
-            try:
-                existing_data = pd.read_parquet(stock_prices_file)
-                if not existing_data.empty:
-                    # Fix Timezones just in case
-                    if 'Date' in existing_data.columns:
-                        existing_data['Date'] = pd.to_datetime(existing_data['Date'])
-                        if existing_data['Date'].dt.tz is not None:
-                            existing_data['Date'] = existing_data['Date'].dt.tz_localize(None)
-                        existing_data.set_index('Date', inplace=True)
+        if stock_prices_file.exists():
+            existing_data = pd.read_parquet(stock_prices_file)
+            # Combine and enforce the 5-year rolling window 
+            updated_data = pd.concat([existing_data, ticker_new_data])
+            updated_data = updated_data[updated_data['Date'] >= cutoff_date]
+            updated_data = updated_data.drop_duplicates(subset=['Date'], keep='last')
+        else:
+            updated_data = ticker_new_data
 
-                    last_date = existing_data.index.max().date()
-                    prices_log[ticker] = str(last_date)
-                    log_updated = True
-            except Exception:
-                pass
+        updated_data.to_parquet(stock_prices_file)
+        prices_log[ticker] = str(updated_data['Date'].max().date())
 
-        # Check if we need to fetch new data
-        today = pd.Timestamp.now().date()
-        if last_date is None or last_date < today:            
-            if last_date:
-                start_date = pd.Timestamp(last_date) + pd.Timedelta(days=1)
-            else:
-                start_date = cutoff_date 
-
-            # Check if start_date is actually valid (not in the future)
-            if start_date <= pd.Timestamp.now().normalize():
-                print(f"Fetching {ticker} from {start_date.date()}...")
-                new_data = fetch_prices(ticker, start=start_date.strftime('%Y-%m-%d'))
-                
-                if not new_data.empty:
-                    # Clean New Data
-                    new_data['Date'] = pd.to_datetime(new_data['Date'])
-                    if new_data['Date'].dt.tz is not None:
-                        new_data['Date'] = new_data['Date'].dt.tz_localize(None)
-                    new_data.set_index('Date', inplace=True)
-                    
-                    # Reload existing if needed (to append)
-                    existing_data = pd.DataFrame()
-                    if stock_prices_file.exists():
-                        existing_data = pd.read_parquet(stock_prices_file)
-                        if 'Date' in existing_data.columns:
-                            existing_data['Date'] = pd.to_datetime(existing_data['Date'])
-                            if existing_data['Date'].dt.tz is not None:
-                                existing_data['Date'] = existing_data['Date'].dt.tz_localize(None)
-                            existing_data.set_index('Date', inplace=True)
-
-                    # Merge
-                    if not existing_data.empty:
-                        updated_data = pd.concat([existing_data, new_data])
-                        updated_data = updated_data[updated_data.index >= cutoff_date]
-                        updated_data = updated_data[~updated_data.index.duplicated(keep='last')]
-                    else:
-                        updated_data = new_data
-
-                    # --- Schema enforcement ---
-                    # Force volume to Integer, filling NaNs first
-                    if 'volume' in updated_data.columns:
-                        updated_data['volume'] = updated_data['volume'].fillna(0).astype('int64')
-
-                    # Force Prices to Float
-                    float_cols = ['open', 'high', 'low', 'close', 'dividends', 'stockSplits']
-                    for col in float_cols:
-                        if col in updated_data.columns:
-                            updated_data[col] = updated_data[col].astype('float64')
-
-                    # Save
-                    updated_data.reset_index(inplace=True)
-                    updated_data.to_parquet(stock_prices_file)
-                    
-                    # Update Log
-                    new_last_date = updated_data['Date'].max().date()
-                    prices_log[ticker] = str(new_last_date)
-                    log_updated = True
-                    print(f" -> Updated {ticker} to {new_last_date}")
-
-    if log_updated:
-        save_prices_log(prices_log)
-        print("Prices log updated.")
+    save_prices_log(prices_log)
+    print("Batch price update completed successfully.")
 
 def update_stock_metadata(tickers_df: pd.DataFrame) -> pd.DataFrame:
     """
